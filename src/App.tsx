@@ -6,12 +6,14 @@ import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import AddData from './pages/AddData'
 import Report from './pages/Report'
-import Login from './pages/Login'
+import Login, { NoAccess } from './pages/Login'
+import Team from './pages/Team'
 
 function Gate() {
-  const { ready, signedIn } = useAuth()
+  const { ready, signedIn, role } = useAuth()
   if (!ready) return null
   if (!signedIn) return <Login />
+  if (!role) return <NoAccess />
   return (
     <TrackerProvider>
       <BrowserRouter>
@@ -21,6 +23,7 @@ function Gate() {
             <Route index element={<Projects />} />
             <Route path="projects/:id" element={<ProjectDetail />} />
             <Route path="add" element={<AddData />} />
+            <Route path="team" element={<Team />} />
             <Route path="*" element={<Projects />} />
           </Route>
         </Routes>
