@@ -96,7 +96,7 @@ export default function Projects() {
                   <div style={{ fontSize: 15, fontWeight: 500 }}>
                     <span style={{ color: 'var(--muted)' }}>{sp?.before != null ? sp.def.format(sp.before) : '—'}</span> → <b style={{ fontWeight: 600 }}>{sp?.after != null ? sp.def.format(sp.after) : '—'}</b>
                   </div>
-                  <div style={{ marginTop: 2, fontSize: 13, fontWeight: 500, color: deltaColor(cvr?.lift) }}>
+                  <div style={{ marginTop: 2, fontSize: 13, fontWeight: 500, color: deltaColor(sp?.lift) }}>
                     {sp?.before != null && sp.after != null ? `${signed(sp.after - sp.before)} points` : 'Waiting for data'}
                   </div>
                 </div>

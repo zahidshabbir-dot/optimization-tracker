@@ -114,10 +114,19 @@ export const STATUS_DOT: Record<Status, string> = {
   Onboarding: '#9AA7C7',
 }
 
+/** The metric that drives status: conversion rate when it has results, else the speed scores. */
+export function keyMetric(sums: Map<string, MetricSummary>): MetricSummary | null {
+  for (const k of ['cvr', 'mobile', 'desktop', 'custom:speed-score']) {
+    const m = sums.get(k)
+    if (m && m.lift !== null) return m
+  }
+  return null
+}
+
 export function statusOf(sums: Map<string, MetricSummary>): Status {
-  const cvr = sums.get('cvr')
-  if (!cvr || cvr.lift === null) return 'Onboarding'
-  return cvr.lift >= 15 ? 'Improving' : 'Needs attention'
+  const m = keyMetric(sums)
+  if (!m || m.lift === null) return 'Onboarding'
+  return m.lift >= 15 ? 'Improving' : 'Needs attention'
 }
 
 export function signed(n: number, digits = 0) {

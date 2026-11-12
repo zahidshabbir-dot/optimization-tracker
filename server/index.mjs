@@ -45,26 +45,6 @@ function tx(fn) {
   try { const r = fn(); db.exec('COMMIT'); return r } catch (e) { db.exec('ROLLBACK'); throw e }
 }
 
-// Seed with the same sample clients as the Supabase project.
-if (db.prepare('SELECT count(*) n FROM projects').get().n === 0) {
-  tx(() => {
-    const V = (k, l, ph, v) => ({ metric_key: k, metric_label: l, phase: ph, value: v })
-    const seed = [['Linen & Loom', 'Shopify', '2026-10-14', 1.2, null, 29, null], ['Peak Fitness Gear', 'Shopify Plus', '2026-09-23', 1.9, null, 34, null],
-      ['Haven Home Decor', 'Shopify', '2026-08-11', 2.2, 3.1, 41, 88], ['Bloom & Co Florals', 'Shopify', '2026-06-02', 1.4, 1.5, 52, 58],
-      ['Northwind Outdoors', 'Shopify Plus', '2026-04-18', 2.1, 2.9, 45, 76]]
-    for (const [n, pl, on, cb, ca, sb, sa] of seed) {
-      const id = createProject({ name: n, platform: pl, onboarded: on, values: [V('cvr', 'Conversion rate', 'before', cb), V('mobile', 'Mobile speed', 'before', sb)] })
-      if (ca != null) addEntry(id, '2026-10-31', 'October numbers added', 'Conversion rate and mobile score', 'Excel', [V('cvr', 'Conversion rate', 'after', ca), V('mobile', 'Mobile speed', 'after', sa)])
-    }
-    const a = createProject({ name: 'Aurora Skincare', platform: 'Shopify', onboarded: '2026-03-04', values: [V('cvr', 'Conversion rate', 'before', 1.8), V('mobile', 'Mobile speed', 'before', 38), V('desktop', 'Desktop speed', 'before', 61), V('lcp', 'Load time (LCP)', 'before', 5.8), V('aov', 'Average order value', 'before', 72.4), V('rpv', 'Revenue per visitor', 'before', 1.3)] })
-    db.prepare('UPDATE projects SET first_change_on=? WHERE id=?').run('2026-04-15', a)
-    addEntry(a, '2026-04-15', 'First change live', 'Image and script clean-up', 'Manual', [V('mobile', 'Mobile speed', 'after', 55)])
-    addEntry(a, '2026-06-09', 'Product page layout test', 'Sticky add to cart on mobile', 'Manual', [V('cvr', 'Conversion rate', 'after', 2.4)])
-    addEntry(a, '2026-08-20', 'Checkout step reduced', 'Fewer fields on mobile', 'Manual', [V('cvr', 'Conversion rate', 'after', 2.5)])
-    addEntry(a, '2026-11-03', 'October numbers added', 'Conversion rate and mobile score', 'Excel', [V('cvr', 'Conversion rate', 'after', 2.6), V('mobile', 'Mobile speed', 'after', 82), V('desktop', 'Desktop speed', 'after', 94), V('lcp', 'Load time (LCP)', 'after', 2.3), V('aov', 'Average order value', 'after', 84.1), V('rpv', 'Revenue per visitor', 'after', 2.19)])
-  })
-}
-
 const clients = new Set()
 const broadcast = () => { for (const c of clients) c.write(`data: change\n\n`) }
 setInterval(() => { for (const c of clients) c.write(`: ping\n\n`) }, 25000)

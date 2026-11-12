@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { addEntry, createProject, useTracker, type NewValue } from '../lib/data'
 import { METRICS, STORED_LABEL, metricDef, slugKey, today, type MetricDef } from '../lib/metrics'
 import { fmtDate } from '../lib/metrics'
-import type { ParsedRow } from '../lib/sheet'
+import { NEW_PROJECT, type ParseResult, type ParsedRow } from '../lib/sheet'
 import { Icon } from '../components/Layout'
 
 type Tab = 'manual' | 'excel' | 'new'
@@ -193,22 +193,23 @@ function ExcelImport() {
   const { projects } = useTracker()
   const [over, setOver] = useState(false)
   const [fileName, setFileName] = useState('')
-  const [rows, setRows] = useState<ParsedRow[] | null>(null)
+  const [parsed, setParsed] = useState<ParseResult | null>(null)
+  const [createNew, setCreateNew] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
+  const rows = parsed?.rows ?? null
 
   const handle = async (file: File | undefined) => {
     if (!file) return
-    setErr(null); setDone(null); setRows(null); setShowAll(false); setFileName(file.name)
+    setErr(null); setDone(null); setParsed(null); setShowAll(false); setCreateNew(true); setFileName(file.name)
     try {
       const { parseFile } = await import('../lib/sheet')
       const res = await parseFile(file, projects)
-      if (res.missingColumns.length) setErr(`Missing column${res.missingColumns.length > 1 ? 's' : ''}: ${res.missingColumns.join(', ')}. Use: Project, Date, Metric, Before/After, Value.`)
-      else if (!res.rows.length) setErr('No data rows found under the header.')
-      else setRows(res.rows)
+      if (!res.rows.length) setErr('No data rows found in this file.')
+      else setParsed(res)
     } catch (e) {
       setErr((e as Error).message)
     }
@@ -217,41 +218,59 @@ function ExcelImport() {
 
   const onDrop = (e: DragEvent) => { e.preventDefault(); setOver(false); handle(e.dataTransfer.files?.[0]) }
 
-  const good = useMemo(() => rows?.filter((r) => !r.problem) ?? [], [rows])
+  const isOk = (r: ParsedRow) => !r.problem || (r.problem === NEW_PROJECT && createNew)
+  const good = useMemo(() => rows?.filter(isOk) ?? [], [rows, createNew]) // eslint-disable-line react-hooks/exhaustive-deps
   const bad = (rows?.length ?? 0) - good.length
+  const newCount = parsed?.newProjects.length ?? 0
 
   const importRows = async () => {
-    if (!good.length) return
+    if (!good.length || !parsed) return
     setBusy(true); setErr(null)
-    const groups = new Map<string, ParsedRow[]>()
-    for (const r of good) {
-      const k = r.projectId + '|' + r.date
-      groups.set(k, [...(groups.get(k) ?? []), r])
-    }
     let ok = 0
+    let created = 0
     try {
+      // 1. create projects that aren't in the dashboard yet
+      const ids = new Map(projects.map((p) => [p.name.trim().toLowerCase(), p.id]))
+      if (createNew) {
+        for (const plan of parsed.newProjects) {
+          const k = plan.name.toLowerCase()
+          if (ids.has(k)) continue
+          const id = await createProject({ name: plan.name, platform: 'Shopify', storeUrl: plan.storeUrl, onboarded: plan.onboarded ?? today(), values: [] })
+          ids.set(k, id); created++
+        }
+      }
+      // 2. one history entry per project + date
+      const groups = new Map<string, (ParsedRow & { pid: string })[]>()
+      for (const r of good) {
+        const pid = r.projectId ?? ids.get(r.projectName.toLowerCase())
+        if (!pid) continue
+        const k = pid + '|' + r.date
+        groups.set(k, [...(groups.get(k) ?? []), { ...r, pid }])
+      }
       for (const g of groups.values()) {
+        const notes = [...new Set(g.map((r) => r.note).filter(Boolean))]
         const labels = [...new Set(g.map((r) => r.metricLabel))]
         await addEntry({
-          projectId: g[0].projectId!,
+          projectId: g[0].pid,
           date: g[0].date!,
           title: `Imported from ${fileName}`,
-          note: labels.join(', '),
+          note: (notes.length ? notes.join(' | ') : labels.join(', ')).slice(0, 2000),
           source: 'Excel',
           values: g.map((r) => ({ metric_key: r.metricKey, metric_label: r.metricLabel, phase: r.phase!, value: r.value! })),
         })
         ok += g.length
       }
-      setDone(`Imported ${ok} row${ok === 1 ? '' : 's'} into ${new Set(good.map((r) => r.projectId)).size} project${groups.size === 1 ? '' : 's'}.`)
-      setRows(null)
+      const pc = new Set([...groups.values()].map((g) => g[0].pid)).size
+      setDone(`Imported ${ok} value${ok === 1 ? '' : 's'} into ${pc} project${pc === 1 ? '' : 's'}${created ? ` (${created} new project${created === 1 ? '' : 's'} created)` : ''}.`)
+      setParsed(null)
     } catch (e) {
-      setErr(`Stopped after ${ok} rows: ${(e as Error).message}`)
+      setErr(`Stopped after ${ok} values${created ? ` and ${created} new projects` : ''}: ${(e as Error).message}`)
     } finally {
       setBusy(false)
     }
   }
 
-  const visible = showAll ? rows ?? [] : (rows ?? []).slice(0, 3)
+  const visible = showAll ? rows ?? [] : (rows ?? []).slice(0, 5)
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -263,7 +282,7 @@ function ExcelImport() {
       >
         {Icon.upload('#1559E6', 40, 1.8)}
         <div className="t">Drop your Excel or CSV file here</div>
-        <div className="d">.xlsx or .csv · any metric name works (CVR, AOV, RPV, speed or your own)</div>
+        <div className="d">.xlsx or .csv · a simple list (Project, Date, Metric, Before/After, Value) or a sheet with Before / After / Current columns</div>
         <label htmlFor="file" className="btn" style={{ marginTop: 8 }}>Choose file</label>
         <input ref={input} id="file" type="file" accept=".xlsx,.xls,.csv" className="sr" onChange={(e) => handle(e.target.files?.[0])} />
         <button type="button" className="linkbtn" style={{ marginTop: 6 }} onClick={async () => (await import('../lib/sheet')).downloadTemplate(projects)}>Download the template</button>
@@ -272,37 +291,56 @@ function ExcelImport() {
       {err && <div className="notice err" role="alert">{err}</div>}
       {done && <div className="notice ok" role="status">{done} <Link to="/">See projects</Link></div>}
 
-      {rows && (
+      {rows && parsed && (
         <div className="card" style={{ padding: 28, display: 'flex', flexDirection: 'column', gap: 18 }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>{fileName}</div>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>{fileName}</div>
+              <div className="small">Read from sheet “{parsed.sheet}”</div>
+            </div>
             <div style={{ fontSize: 14, fontWeight: 500, color: bad ? 'var(--warn)' : 'var(--good)' }}>
-              {rows.length} rows found · {bad ? `${bad} need${bad === 1 ? 's' : ''} fixing` : 'all columns matched'}
+              {rows.length} values found · {bad ? `${bad} will be skipped` : 'all ready to import'}
             </div>
           </div>
+
+          {newCount > 0 && (
+            <label style={{ display: 'flex', gap: 12, alignItems: 'flex-start', background: 'var(--blue-wash)', borderRadius: 12, padding: '14px 16px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={createNew} onChange={(e) => setCreateNew(e.target.checked)} style={{ width: 20, height: 20, marginTop: 2, accentColor: 'var(--blue)' }} />
+              <span>
+                <b>Create {newCount} new project{newCount === 1 ? '' : 's'}</b> that {newCount === 1 ? 'is' : 'are'} not in the dashboard yet
+                <span className="small" style={{ display: 'block', marginTop: 4 }}>{parsed.newProjects.map((p) => p.name).join(', ')}</span>
+              </span>
+            </label>
+          )}
+
           <div className="table-scroll">
             <table className="preview">
               <thead><tr><th>Project</th><th>Date</th><th>Metric</th><th>Before / after</th><th>Value</th><th>Check</th></tr></thead>
               <tbody>
-                {visible.map((r) => (
-                  <tr key={r.line} className={r.problem ? 'bad' : ''}>
-                    <td style={{ fontWeight: 500 }}>{r.projectName || '—'}</td>
-                    <td style={{ color: 'var(--ink-2)' }}>{r.date ? fmtDate(r.date) : '—'}</td>
-                    <td>{r.metricLabel}</td>
-                    <td style={{ color: 'var(--ink-2)' }}>{r.phase ? (r.phase === 'before' ? 'Before' : 'After') : '—'}</td>
-                    <td style={{ fontWeight: 500 }}>{r.value ?? '—'}</td>
-                    <td style={{ fontSize: 13, color: r.problem ? 'var(--err)' : 'var(--good)' }}>{r.problem ? `Row ${r.line}: ${r.problem}` : 'OK'}</td>
-                  </tr>
-                ))}
+                {visible.map((r, i) => {
+                  const ok = isOk(r)
+                  return (
+                    <tr key={i} className={ok ? '' : 'bad'}>
+                      <td style={{ fontWeight: 500 }}>{r.projectName || '—'}</td>
+                      <td style={{ color: 'var(--ink-2)' }}>{r.date ? fmtDate(r.date) : '—'}</td>
+                      <td>{r.metricLabel}</td>
+                      <td style={{ color: 'var(--ink-2)' }}>{r.note.split(':')[0] || (r.phase === 'before' ? 'Before' : r.phase === 'after' ? 'After' : '—')}</td>
+                      <td style={{ fontWeight: 500 }}>{r.value ?? '—'}</td>
+                      <td style={{ fontSize: 13, color: ok ? 'var(--good)' : 'var(--err)' }}>
+                        {ok ? (r.problem === NEW_PROJECT ? 'OK · new project' : 'OK') : `Row ${r.line}: ${r.problem}`}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
           <div className="small" style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            Showing {visible.length} of {rows.length} rows
-            {rows.length > 3 && <button type="button" className="linkbtn" style={{ fontSize: 13 }} onClick={() => setShowAll(!showAll)}>{showAll ? 'Show less' : 'Show all'}</button>}
+            Showing {visible.length} of {rows.length}
+            {rows.length > 5 && <button type="button" className="linkbtn" style={{ fontSize: 13 }} onClick={() => setShowAll(!showAll)}>{showAll ? 'Show less' : 'Show all'}</button>}
           </div>
-          {bad > 0 && <div className="notice warn">Rows with problems will be skipped. Unknown projects must be created first under “New project”.</div>}
-          <div><button type="button" className="btn lg" disabled={!good.length || busy} onClick={importRows}>{busy ? 'Importing…' : `Import ${good.length} row${good.length === 1 ? '' : 's'}`}</button></div>
+          {bad > 0 && <div className="notice warn">Rows marked in red will be skipped (for example a value with no date). Fix them in the file and upload again, or add them under “Type it in”.</div>}
+          <div><button type="button" className="btn lg" disabled={!good.length || busy} onClick={importRows}>{busy ? 'Importing…' : `Import ${good.length} value${good.length === 1 ? '' : 's'}`}</button></div>
         </div>
       )}
     </section>

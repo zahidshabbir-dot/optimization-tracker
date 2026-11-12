@@ -1,4 +1,4 @@
-import { readSheet } from 'read-excel-file/browser'
+import readXlsxFile from 'read-excel-file/browser'
 import writeXlsxFile from 'write-excel-file/browser'
 import type { Project } from './supabase'
 import { resolveMetric, STORED_LABEL } from './metrics'
@@ -13,13 +13,22 @@ export type ParsedRow = {
   metricLabel: string
   phase: 'before' | 'after' | null
   value: number | null
+  /** Source / notes text carried into the history entry */
+  note: string
   problem: string | null
 }
+
+export type NewProjectPlan = { name: string; storeUrl: string; onboarded: string | null }
 
 export type ParseResult = {
   rows: ParsedRow[]
   missingColumns: string[]
+  sheet: string
+  newProjects: NewProjectPlan[]
 }
+
+/** Row is fine except its project isn't in the dashboard yet (can be created on import). */
+export const NEW_PROJECT = 'New project'
 
 const COLS: Record<'project' | 'date' | 'metric' | 'phase' | 'value', RegExp> = {
   project: /^(project|client|store|brand|name)$/i,
@@ -88,53 +97,150 @@ function toPhase(v: unknown): 'before' | 'after' | null {
   return null
 }
 
+type Grid = unknown[][]
+const cellText = (c: unknown) => String(c ?? '').trim()
+
 export async function parseFile(file: File, projects: Project[]): Promise<ParseResult> {
   const name = file.name.toLowerCase()
-  let grid: unknown[][]
-  if (name.endsWith('.csv')) grid = parseCsv(await file.text())
-  else if (name.endsWith('.xlsx')) grid = (await readSheet(file)) as unknown[][]
+  let sheets: { sheet: string; data: Grid }[]
+  if (name.endsWith('.csv')) sheets = [{ sheet: 'CSV', data: parseCsv(await file.text()) }]
+  else if (name.endsWith('.xlsx')) sheets = (await readXlsxFile(file)) as unknown as { sheet: string; data: Grid }[]
   else if (name.endsWith('.xls')) throw new Error('Old .xls files are not supported. In Excel choose File › Save As › .xlsx, then upload again.')
   else throw new Error('Please choose an .xlsx or .csv file.')
-
-  if (!grid.length) throw new Error('The file is empty.')
-  const headerIdx = grid.findIndex((r) => r.filter((c) => typeof c === 'string' && Object.values(COLS).some((re) => re.test(c.trim()))).length >= 3)
-  if (headerIdx < 0) throw new Error('Could not find a header row. Use the columns: Project, Date, Metric, Before/After, Value.')
-  const header = grid[headerIdx].map((c) => String(c ?? '').trim())
-  const idx = Object.fromEntries(
-    (Object.keys(COLS) as (keyof typeof COLS)[]).map((k) => [k, header.findIndex((h) => COLS[k].test(h))]),
-  ) as Record<keyof typeof COLS, number>
-  const missingColumns = (Object.keys(idx) as (keyof typeof COLS)[]).filter((k) => idx[k] < 0)
-  if (missingColumns.length) return { rows: [], missingColumns }
+  if (!sheets.some((s) => s.data.length)) throw new Error('The file is empty.')
 
   const byName = new Map(projects.map((p) => [p.name.trim().toLowerCase(), p.id]))
+  const stores = findStoreLinks(sheets)
+
+  // 1) Simple list layout on any sheet: Project | Date | Metric | Before/After | Value
+  for (const s of sheets) {
+    const res = parseLong(s.data, byName)
+    if (res) return finish(res, s.sheet, stores)
+  }
+  // 2) Side-by-side layout: Project | Device/Metric | Before date | Before | After date | After | Current date | Current ...
+  for (const s of sheets) {
+    const res = parseWide(s.data, byName)
+    if (res) return finish(res, s.sheet, stores)
+  }
+  throw new Error('Could not find data in this file. Use the template columns (Project, Date, Metric, Before/After, Value), or a sheet with Project plus Before / After / Current columns.')
+}
+
+function finish(rows: ParsedRow[], sheet: string, stores: Map<string, string>): ParseResult {
+  // Projects not in the dashboard yet can be created during import.
+  const fresh = new Map<string, NewProjectPlan>()
+  for (const r of rows) {
+    if (r.projectId || !r.projectName) continue
+    const k = r.projectName.toLowerCase()
+    const plan = fresh.get(k) ?? { name: r.projectName, storeUrl: stores.get(k) ?? '', onboarded: null }
+    if (r.date && (!plan.onboarded || r.date < plan.onboarded)) plan.onboarded = r.date
+    fresh.set(k, plan)
+  }
+  return { rows, missingColumns: [], sheet, newProjects: [...fresh.values()] }
+}
+
+function problemOf(r: ParsedRow, hasMetric: boolean): string | null {
+  return !r.projectName ? 'No project'
+    : !r.date ? 'No date in file'
+    : !hasMetric ? 'No metric'
+    : !r.phase ? 'Use Before or After'
+    : r.value === null ? 'Value is not a number'
+    : !r.projectId ? NEW_PROJECT
+    : null
+}
+
+function parseLong(grid: Grid, byName: Map<string, string>): ParsedRow[] | null {
+  const headerIdx = grid.findIndex((r) => r.filter((c) => typeof c === 'string' && Object.values(COLS).some((re) => re.test(c.trim()))).length >= 4)
+  if (headerIdx < 0) return null
+  const header = grid[headerIdx].map(cellText)
+  const idx = Object.fromEntries((Object.keys(COLS) as (keyof typeof COLS)[]).map((k) => [k, header.findIndex((h) => COLS[k].test(h))])) as Record<keyof typeof COLS, number>
+  if (Object.values(idx).some((i) => i < 0)) return null
   const rows: ParsedRow[] = []
   grid.slice(headerIdx + 1).forEach((r, i) => {
-    if (!r.some((c) => c != null && String(c).trim() !== '')) return
-    const projectName = String(r[idx.project] ?? '').trim()
-    const metricRaw = String(r[idx.metric] ?? '').trim()
+    if (!r.some((c) => cellText(c) !== '')) return
+    const projectName = cellText(r[idx.project])
+    const metricRaw = cellText(r[idx.metric])
     const { key, label } = resolveMetric(metricRaw || '?')
     const row: ParsedRow = {
-      line: headerIdx + i + 2,
-      projectName,
-      projectId: byName.get(projectName.toLowerCase()) ?? null,
-      date: toDate(r[idx.date]),
-      metricRaw,
-      metricKey: key,
-      metricLabel: label,
-      phase: toPhase(r[idx.phase]),
-      value: toNumber(r[idx.value]),
-      problem: null,
+      line: headerIdx + i + 2, projectName, projectId: byName.get(projectName.toLowerCase()) ?? null,
+      date: toDate(r[idx.date]), metricRaw, metricKey: key, metricLabel: label,
+      phase: toPhase(r[idx.phase]), value: toNumber(r[idx.value]), note: '', problem: null,
     }
-    row.problem = !projectName ? 'No project'
-      : !row.projectId ? 'Unknown project'
-      : !row.date ? 'Bad date'
-      : !metricRaw ? 'No metric'
-      : !row.phase ? 'Use Before or After'
-      : row.value === null ? 'Value is not a number'
-      : null
+    row.problem = problemOf(row, !!metricRaw)
     rows.push(row)
   })
-  return { rows, missingColumns: [] }
+  return rows
+}
+
+const PHASE_COLS: [RegExp, 'before' | 'after', string][] = [
+  [/^(before|baseline)( \(.*\))?$/i, 'before', 'Before'],
+  [/^(after)( \(.*\))?$/i, 'after', 'After'],
+  [/^(current|today|latest|now)( \(.*\))?$/i, 'after', 'Current'],
+]
+
+function parseWide(grid: Grid, byName: Map<string, string>): ParsedRow[] | null {
+  const headerIdx = grid.findIndex((r) => {
+    const h = r.map(cellText)
+    return h.some((c) => COLS.project.test(c)) && h.some((c) => PHASE_COLS[0][0].test(c)) && h.some((c) => PHASE_COLS[1][0].test(c) || PHASE_COLS[2][0].test(c))
+  })
+  if (headerIdx < 0) return null
+  const header = grid[headerIdx].map(cellText)
+  const col = (re: RegExp) => header.findIndex((h) => re.test(h))
+  const projectCol = col(COLS.project)
+  const metricCol = col(/^(device|metric|kpi|measure)$/i)
+  const plain = col(/^date$/i)
+  const groups = PHASE_COLS.map(([re, phase, word]) => ({
+    phase, word,
+    value: col(re),
+    date: (() => { const d = col(new RegExp(`^${word} date$`, 'i')); return d >= 0 ? d : plain })(),
+    notes: [col(new RegExp(`^${word} (source|notes?)$`, 'i'))].filter((i) => i >= 0),
+  })).filter((g) => g.value >= 0)
+
+  const rows: ParsedRow[] = []
+  grid.slice(headerIdx + 1).forEach((r, i) => {
+    const projectName = cellText(r[projectCol])
+    if (!projectName) return
+    const device = metricCol >= 0 ? cellText(r[metricCol]) : ''
+    const m = deviceMetric(device)
+    for (const g of groups) {
+      const value = toNumber(r[g.value])
+      if (value === null) continue // nothing to import for this side
+      const note = g.notes.map((n) => cellText(r[n])).filter(Boolean).join(' · ')
+      const row: ParsedRow = {
+        line: headerIdx + i + 2, projectName, projectId: byName.get(projectName.toLowerCase()) ?? null,
+        date: g.date >= 0 ? toDate(r[g.date]) : null, metricRaw: device, metricKey: m.key, metricLabel: m.label,
+        phase: g.phase, value, note: `${g.word}${note ? ': ' + note : ''}`, problem: null,
+      }
+      row.problem = problemOf(row, true)
+      rows.push(row)
+    }
+  })
+  return rows.length ? rows : null
+}
+
+function deviceMetric(device: string) {
+  const d = device.toLowerCase()
+  if (/^mobile/.test(d)) return { key: 'mobile', label: STORED_LABEL.mobile }
+  if (/^desktop/.test(d)) return { key: 'desktop', label: STORED_LABEL.desktop }
+  if (!d || /not stated|unknown|n\/a/.test(d)) return { key: 'custom:speed-score', label: 'Speed score' }
+  return resolveMetric(device)
+}
+
+/** Picks up store links from any sheet that has Project + Store/URL columns. */
+function findStoreLinks(sheets: { data: Grid }[]) {
+  const out = new Map<string, string>()
+  for (const s of sheets) {
+    const hi = s.data.findIndex((r) => r.map(cellText).some((c) => COLS.project.test(c)) && r.map(cellText).some((c) => /^(store|store link|url|website|domain)$/i.test(c)))
+    if (hi < 0) continue
+    const h = s.data[hi].map(cellText)
+    const pc = h.findIndex((c) => COLS.project.test(c) && !/^store$/i.test(c))
+    const sc = h.findIndex((c) => /^(store|store link|url|website|domain)$/i.test(c))
+    if (pc < 0 || sc < 0) continue
+    for (const r of s.data.slice(hi + 1)) {
+      const p = cellText(r[pc]).toLowerCase(), u = cellText(r[sc])
+      if (p && /\./.test(u) && !out.has(p)) out.set(p, /^https?:\/\//.test(u) ? u : 'https://' + u)
+    }
+  }
+  return out
 }
 
 export async function downloadTemplate(projects: Project[]) {
