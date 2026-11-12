@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { Entry, MetricValue, Project } from './supabase'
-import { backend, type EntryInput, type EntryPatch, type LiveStatus, type ProjectInput, type ProjectPatch } from './backend'
+import type { Attachment, Entry, MetricValue, Project } from './supabase'
+import { backend, type AttachmentInput, type EntryInput, type EntryPatch, type LiveStatus, type ProjectInput, type ProjectPatch } from './backend'
 
 export type { NewValue } from './backend'
 
@@ -8,6 +8,7 @@ type TrackerData = {
   projects: Project[]
   entries: Entry[]
   values: MetricValue[]
+  attachments: Attachment[]
   loading: boolean
   error: string | null
   live: LiveStatus
@@ -20,6 +21,7 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [entries, setEntries] = useState<Entry[]>([])
   const [values, setValues] = useState<MetricValue[]>([])
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [live, setLive] = useState<LiveStatus>('connecting')
@@ -31,6 +33,7 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
       setProjects(s.projects)
       setEntries(s.entries)
       setValues(s.values.map((x) => ({ ...x, value: Number(x.value) })))
+      setAttachments(s.attachments ?? [])
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -49,8 +52,8 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   }, [refresh])
 
   const value = useMemo(
-    () => ({ projects, entries, values, loading, error, live, refresh }),
-    [projects, entries, values, loading, error, live, refresh],
+    () => ({ projects, entries, values, attachments, loading, error, live, refresh }),
+    [projects, entries, values, attachments, loading, error, live, refresh],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -69,3 +72,5 @@ export const updateProject = (id: string, p: ProjectPatch) => backend.updateProj
 export const deleteProject = (id: string) => backend.deleteProject(id)
 export const updateEntry = (id: string, p: EntryPatch) => backend.updateEntry(id, p)
 export const deleteEntry = (id: string) => backend.deleteEntry(id)
+export const addAttachment = (a: AttachmentInput) => backend.addAttachment(a)
+export const deleteAttachment = (a: Attachment) => backend.deleteAttachment(a)

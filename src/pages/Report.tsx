@@ -2,13 +2,14 @@ import { Link, useParams } from 'react-router-dom'
 import { useTracker } from '../lib/data'
 import { fmtDate, projectView, signed, STORED_LABEL } from '../lib/metrics'
 import { Icon } from '../components/Layout'
+import Screenshots from '../components/Screenshots'
 
 const ORDER = ['cvr', 'aov', 'rpv', 'mobile', 'desktop', 'lcp']
 
 /** Printable one-page summary to send to the client (Print → Save as PDF). */
 export default function Report() {
   const { id = '' } = useParams()
-  const { projects, values, entries, loading } = useTracker()
+  const { projects, values, entries, attachments, loading } = useTracker()
   const project = projects.find((p) => p.id === id)
   if (loading) return null
   if (!project) return <div style={{ padding: 40 }}>Project not found. <Link to="/">Back to projects</Link></div>
@@ -72,6 +73,8 @@ export default function Report() {
             </tbody>
           </table>
         </section>
+
+        <Screenshots projectId={id} items={attachments.filter((a) => a.project_id === id)} readOnly />
 
         <section>
           <h2 style={{ marginBottom: 12 }}>What we changed</h2>

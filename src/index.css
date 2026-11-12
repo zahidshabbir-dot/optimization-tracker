@@ -148,3 +148,11 @@ tr.bad td { background: var(--err-bg); }
   body { background: #fff; }
   .card { break-inside: avoid; }
 }
+.shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+.shot { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.shot-link { display: block; aspect-ratio: 4 / 3; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--blue-wash); }
+.shot-link:hover { border-color: var(--blue); }
+.shot-link img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.shot-url { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px; color: var(--blue); font-size: 13px; font-weight: 500; text-align: center; word-break: break-all; }
+.shot figcaption { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
+.shot-title { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

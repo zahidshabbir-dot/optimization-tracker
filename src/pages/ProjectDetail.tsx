@@ -5,6 +5,7 @@ import { fmtDate, metricDef, projectView, resolveMetric, signed, STORED_LABEL, t
 import type { Entry, MetricValue, Project } from '../lib/supabase'
 import { Icon, rememberProject } from '../components/Layout'
 import Modal from '../components/Modal'
+import Screenshots from '../components/Screenshots'
 
 const HIST_SHORT: Record<string, string> = { cvr: 'CVR', aov: 'AOV', rpv: 'RPV', mobile: 'Mobile', desktop: 'Desktop', lcp: 'LCP' }
 const CORE = ['cvr', 'mobile', 'desktop', 'lcp', 'aov', 'rpv']
@@ -37,7 +38,7 @@ function InlineCard({ title, abbr, s }: { title: string; abbr?: string; s: Metri
 
 export default function ProjectDetail() {
   const { id = '' } = useParams()
-  const { projects, values, entries, loading } = useTracker()
+  const { projects, values, entries, attachments, loading } = useTracker()
   const project = projects.find((p) => p.id === id)
   const [editing, setEditing] = useState(false)
   const [editEntry, setEditEntry] = useState<Entry | null>(null)
@@ -158,6 +159,8 @@ export default function ProjectDetail() {
         <InlineCard title="Revenue per visitor" abbr="RPV" s={s.get('rpv')} />
         {extras.map((m) => <InlineCard key={m.key} title={m.label} s={m} />)}
       </section>
+
+      <Screenshots projectId={project.id} items={attachments.filter((a) => a.project_id === project.id)} />
 
       <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <h2>History</h2>

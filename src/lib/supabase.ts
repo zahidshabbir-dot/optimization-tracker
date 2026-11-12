@@ -42,3 +42,14 @@ export type MetricValue = {
   recorded_on: string
   created_at: string
 }
+
+export type Attachment = {
+  id: string
+  project_id: string
+  phase: 'before' | 'after'
+  label: string | null
+  url: string
+  storage_path: string | null
+  taken_on: string | null
+  created_at: string
+}

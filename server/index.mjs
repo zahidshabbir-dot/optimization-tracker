@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, project_id TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS metric_values (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   entry_id TEXT REFERENCES entries(id) ON DELETE CASCADE, metric_key TEXT NOT NULL, metric_label TEXT NOT NULL,
   phase TEXT NOT NULL CHECK (phase IN ('before','after')), value REAL NOT NULL, recorded_on TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  phase TEXT NOT NULL CHECK (phase IN ('before','after')), label TEXT, url TEXT NOT NULL, storage_path TEXT, taken_on TEXT, created_at TEXT NOT NULL);
 `)
 
 const now = () => new Date().toISOString()
@@ -59,6 +61,7 @@ createServer(async (req, res) => {
         projects: db.prepare('SELECT * FROM projects ORDER BY onboarded_on DESC').all(),
         entries: db.prepare('SELECT * FROM entries ORDER BY entry_date DESC, created_at DESC').all(),
         values: db.prepare('SELECT * FROM metric_values').all(),
+        attachments: db.prepare('SELECT * FROM attachments ORDER BY taken_on, created_at').all(),
       })
     }
     if (req.method === 'GET' && req.url === '/api/events') {
@@ -80,7 +83,16 @@ createServer(async (req, res) => {
       const id = tx(() => createProject(b))
       broadcast(); return send(res, 201, { id })
     }
-    const m = req.url.match(/^\/api\/(projects|entries)\/([0-9a-f-]{36})$/)
+    if (req.method === 'POST' && req.url === '/api/attachments') {
+      const b = await readBody(req)
+      if (!/^https?:\/\//i.test(b.url || '')) return send(res, 400, { error: 'Links must start with http:// or https://' })
+      if (!['before', 'after'].includes(b.phase)) return send(res, 400, { error: 'Choose Before or After' })
+      if (!db.prepare('SELECT 1 FROM projects WHERE id=?').get(b.project_id)) return send(res, 400, { error: 'Unknown project' })
+      const id = randomUUID()
+      db.prepare('INSERT INTO attachments VALUES (?,?,?,?,?,?,?,?)').run(id, b.project_id, b.phase, (b.label || '').trim() || null, b.url.trim(), null, isDate(b.taken_on) ? b.taken_on : null, now())
+      broadcast(); return send(res, 201, { id })
+    }
+    const m = req.url.match(/^\/api\/(projects|entries|attachments)\/([0-9a-f-]{36})$/)
     if (m && req.method === 'DELETE') {
       db.prepare(`DELETE FROM ${m[1]} WHERE id=?`).run(m[2])
       broadcast(); return send(res, 200, { id: m[2] })
