@@ -10,7 +10,7 @@ export type MetricDef = {
   format: (v: number) => string
 }
 
-const pct = (v: number) => `${v.toFixed(1)}%`
+const pct = (v: number) => `${Math.abs(v * 10 - Math.round(v * 10)) < 1e-9 ? v.toFixed(1) : v.toFixed(2)}%`
 const money = (v: number) => `$${v.toFixed(2)}`
 const score = (v: number) => String(Math.round(v))
 const secs = (v: number) => `${v.toFixed(1)} s`

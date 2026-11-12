@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Entry, MetricValue, Project } from './supabase'
-import { backend, type EntryInput, type LiveStatus, type ProjectInput } from './backend'
+import { backend, type EntryInput, type EntryPatch, type LiveStatus, type ProjectInput, type ProjectPatch } from './backend'
 
 export type { NewValue } from './backend'
 
@@ -65,3 +65,7 @@ export function useTracker() {
 export const addEntry = (a: EntryInput) => backend.addEntry(a)
 /** Creates a project plus its "Onboarded" entry and starting numbers, atomically. */
 export const createProject = (a: ProjectInput) => backend.createProject(a)
+export const updateProject = (id: string, p: ProjectPatch) => backend.updateProject(id, p)
+export const deleteProject = (id: string) => backend.deleteProject(id)
+export const updateEntry = (id: string, p: EntryPatch) => backend.updateEntry(id, p)
+export const deleteEntry = (id: string) => backend.deleteEntry(id)

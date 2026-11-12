@@ -5,6 +5,8 @@ export type NewValue = { metric_key: string; metric_label: string; phase: 'befor
 export type LiveStatus = 'connecting' | 'live' | 'offline'
 export type EntryInput = { projectId: string; date: string; title: string; note?: string | null; source: 'Manual' | 'Excel'; values: NewValue[] }
 export type ProjectInput = { name: string; platform: string; storeUrl: string; onboarded: string; values: NewValue[] }
+export type ProjectPatch = { name: string; platform: string; store_url: string | null; onboarded_on: string; first_change_on: string | null }
+export type EntryPatch = { date: string; title: string; note: string; values: NewValue[] }
 
 type Backend = {
   load(): Promise<Snapshot>
@@ -12,7 +14,13 @@ type Backend = {
   subscribe(onChange: () => void, onStatus: (s: LiveStatus) => void): () => void
   addEntry(a: EntryInput): Promise<string>
   createProject(a: ProjectInput): Promise<string>
+  updateProject(id: string, p: ProjectPatch): Promise<void>
+  deleteProject(id: string): Promise<void>
+  updateEntry(id: string, p: EntryPatch): Promise<void>
+  deleteEntry(id: string): Promise<void>
 }
+
+const friendly = (m: string) => (/projects_name_unique|duplicate key/.test(m) ? 'A project with that name already exists.' : m)
 
 const supabaseBackend: Backend = {
   async load() {
@@ -41,14 +49,30 @@ const supabaseBackend: Backend = {
   },
   async createProject(a) {
     const { data, error } = await supabase.rpc('create_project', { p_name: a.name, p_platform: a.platform, p_store_url: a.storeUrl, p_onboarded: a.onboarded, p_values: a.values })
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(friendly(error.message))
     return data as string
+  },
+  async updateProject(id, p) {
+    const { error } = await supabase.from('projects').update(p).eq('id', id)
+    if (error) throw new Error(friendly(error.message))
+  },
+  async deleteProject(id) {
+    const { error } = await supabase.from('projects').delete().eq('id', id)
+    if (error) throw new Error(error.message)
+  },
+  async updateEntry(id, p) {
+    const { error } = await supabase.rpc('update_entry', { p_entry: id, p_date: p.date, p_title: p.title, p_note: p.note, p_values: p.values })
+    if (error) throw new Error(error.message)
+  },
+  async deleteEntry(id) {
+    const { error } = await supabase.from('entries').delete().eq('id', id)
+    if (error) throw new Error(error.message)
   },
 }
 
 const API = (import.meta.env.VITE_LOCAL_API as string | undefined) ?? '/api'
-async function post(path: string, body: unknown) {
-  const r = await fetch(API + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+async function post(path: string, body: unknown, method = 'POST') {
+  const r = await fetch(API + path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const j = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`)
   return j.id as string
@@ -69,6 +93,10 @@ const localBackend: Backend = {
   },
   addEntry: (a) => post('/entries', a),
   createProject: (a) => post('/projects', a),
+  updateProject: async (id, p) => { await post(`/projects/${id}`, p, 'PUT') },
+  deleteProject: async (id) => { await post(`/projects/${id}`, {}, 'DELETE') },
+  updateEntry: async (id, p) => { await post(`/entries/${id}`, p, 'PUT') },
+  deleteEntry: async (id) => { await post(`/entries/${id}`, {}, 'DELETE') },
 }
 
 export const backend: Backend = BACKEND === 'local' ? localBackend : supabaseBackend

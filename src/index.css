@@ -126,3 +126,25 @@ tr.bad td { background: var(--err-bg); }
 @keyframes sk { to { background-position: -200% 0; } }
 .flash { animation: flash 1.2s ease-out; }
 @keyframes flash { from { background: #FFF8D6; } to { background: transparent; } }
+
+.modal { border: 0; border-radius: 20px; padding: 0; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); color: var(--ink); box-shadow: 0 20px 60px rgba(20, 30, 70, .25); }
+.modal::backdrop { background: rgba(20, 30, 70, .35); }
+.modal-body { padding: 28px; display: flex; flex-direction: column; gap: 20px; }
+.modal-body.form, .modal .form { padding: 0; border: 0; }
+.btn.danger { background: var(--err); } .btn.danger:hover { background: #8F1B12; }
+.btn.subtle { background: #fff; color: var(--ink-2); border: 1px solid var(--field); } .btn.subtle:hover { background: #F3F6FC; color: var(--ink); }
+.row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.hist { grid-template-columns: 120px 1fr 180px 70px 76px; }
+.chart { padding: 22px 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+@media (max-width: 420px) { .charts { grid-template-columns: 1fr; } }
+.tip { position: absolute; transform: translate(-50%, calc(-100% - 12px)); background: var(--ink); color: #fff; font-size: 12px; padding: 6px 10px; border-radius: 8px; pointer-events: none; white-space: nowrap; }
+.seg { display: inline-flex; border: 1px solid var(--field); border-radius: 41px; overflow: hidden; }
+.seg button { border: 0; background: #fff; color: var(--ink-2); padding: 0 14px; height: 36px; font-size: 14px; font-weight: 500; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--blue-bg); color: var(--blue); }
+.vrow { display: grid; grid-template-columns: minmax(140px, 1.4fr) 110px minmax(90px, 1fr) 32px; gap: 10px; align-items: center; }
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff; }
+  .card { break-inside: avoid; }
+}

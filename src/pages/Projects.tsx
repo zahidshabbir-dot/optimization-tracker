@@ -11,6 +11,7 @@ export default function Projects() {
   const { projects, values, entries, loading, error } = useTracker()
   const [filter, setFilter] = useState<Filter>('All')
   const [q, setQ] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   const rows = useMemo(
     () => projects.map((p) => projectView(p, values.filter((v) => v.project_id === p.id), entries.filter((e) => e.project_id === p.id))),
@@ -39,6 +40,10 @@ export default function Projects() {
             {Icon.search()}
             <input type="search" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} />
           </label>
+          <button type="button" className="btn subtle" disabled={exporting || !projects.length} onClick={async () => {
+            setExporting(true)
+            try { await (await import('../lib/sheet')).exportXlsx(projects, values, `optimization-tracker-${new Date().toISOString().slice(0, 10)}.xlsx`) } finally { setExporting(false) }
+          }}>{exporting ? 'Exporting…' : 'Export Excel'}</button>
           <Link className="btn" to="/add">Add data</Link>
         </div>
       </header>

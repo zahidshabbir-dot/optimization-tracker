@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { useTracker } from '../lib/data'
-import { fmtDate, projectView, signed, type MetricSummary } from '../lib/metrics'
-import type { MetricValue } from '../lib/supabase'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { deleteEntry, deleteProject, updateEntry, updateProject, useTracker } from '../lib/data'
+import { fmtDate, metricDef, projectView, resolveMetric, signed, STORED_LABEL, type MetricSummary } from '../lib/metrics'
+import type { Entry, MetricValue, Project } from '../lib/supabase'
 import { Icon, rememberProject } from '../components/Layout'
+import Modal from '../components/Modal'
 
 const HIST_SHORT: Record<string, string> = { cvr: 'CVR', aov: 'AOV', rpv: 'RPV', mobile: 'Mobile', desktop: 'Desktop', lcp: 'LCP' }
 const CORE = ['cvr', 'mobile', 'desktop', 'lcp', 'aov', 'rpv']
@@ -38,6 +39,9 @@ export default function ProjectDetail() {
   const { id = '' } = useParams()
   const { projects, values, entries, loading } = useTracker()
   const project = projects.find((p) => p.id === id)
+  const [editing, setEditing] = useState(false)
+  const [editEntry, setEditEntry] = useState<Entry | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => { if (project) rememberProject(project.id) }, [project])
 
@@ -108,7 +112,15 @@ export default function ProjectDetail() {
               {project.store_url && <> · <a href={project.store_url} target="_blank" rel="noreferrer">{project.store_url.replace(/^https?:\/\//, '')}</a></>}
             </p>
           </div>
-          <Link className="btn" to={`/add?project=${project.id}`}>Add data</Link>
+          <div className="actions">
+            <button type="button" className="btn subtle" onClick={() => setEditing(true)}>Edit project</button>
+            <button type="button" className="btn subtle" disabled={exporting} onClick={async () => {
+              setExporting(true)
+              try { await (await import('../lib/sheet')).exportXlsx([project], pValues, `${project.name.replace(/[^\w-]+/g, '-')}-data.xlsx`) } finally { setExporting(false) }
+            }}>{exporting ? 'Exporting…' : 'Export Excel'}</button>
+            <Link className="btn subtle" to={`/projects/${project.id}/report`}>Client report</Link>
+            <Link className="btn" to={`/add?project=${project.id}`}>Add data</Link>
+          </div>
         </div>
       </header>
 
@@ -150,7 +162,7 @@ export default function ProjectDetail() {
       <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <h2>History</h2>
         <div className="card table-scroll">
-          <div style={{ minWidth: 640 }}>
+          <div style={{ minWidth: 720 }}>
             {pEntries.length === 0 && <div className="empty">No history yet.</div>}
             {pEntries.map((e) => {
               const c = changeText(valuesByEntry.get(e.id) ?? [])
@@ -166,12 +178,137 @@ export default function ProjectDetail() {
                     {c.more > 0 && <div className="small" style={{ fontWeight: 400 }}>+{c.more} more</div>}
                   </div>
                   <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--muted)', textAlign: 'right' }}>{e.source}</div>
+                  <div className="row-actions">
+                    <button type="button" className="icon-btn" aria-label={`Edit ${e.title} on ${fmtDate(e.entry_date)}`} onClick={() => setEditEntry(e)}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M14 6l4 4" /></svg>
+                    </button>
+                    <button type="button" className="icon-btn" aria-label={`Delete ${e.title} on ${fmtDate(e.entry_date)}`} onClick={async () => {
+                      if (!window.confirm(`Delete “${e.title}” (${fmtDate(e.entry_date)}) and its numbers? This can't be undone.`)) return
+                      try { await deleteEntry(e.id) } catch (err) { window.alert((err as Error).message) }
+                    }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7h16" /><path d="M9 7V4h6v3" /><path d="M6 7l1 13h10l1-13" /></svg>
+                    </button>
+                  </div>
                 </div>
               )
             })}
           </div>
         </div>
       </section>
+
+      <Modal title="Edit project" open={editing} onClose={() => setEditing(false)}>
+        {editing && <EditProjectForm project={project} onDone={() => setEditing(false)} />}
+      </Modal>
+      <Modal title="Edit entry" open={!!editEntry} onClose={() => setEditEntry(null)}>
+        {editEntry && <EditEntryForm entry={editEntry} values={valuesByEntry.get(editEntry.id) ?? []} onDone={() => setEditEntry(null)} />}
+      </Modal>
     </div>
+  )
+}
+
+function EditProjectForm({ project, onDone }: { project: Project; onDone: () => void }) {
+  const navigate = useNavigate()
+  const [f, setF] = useState({ name: project.name, platform: project.platform, store_url: project.store_url ?? '', onboarded_on: project.onboarded_on, first_change_on: project.first_change_on ?? '' })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState('')
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value })
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault(); setErr(null)
+    if (!f.name.trim()) return setErr('Client name is required.')
+    setBusy(true)
+    try {
+      await updateProject(project.id, { name: f.name.trim(), platform: f.platform, store_url: f.store_url.trim() || null, onboarded_on: f.onboarded_on, first_change_on: f.first_change_on || null })
+      onDone()
+    } catch (e2) { setErr((e2 as Error).message); setBusy(false) }
+  }
+  const remove = async () => {
+    setBusy(true); setErr(null)
+    try { await deleteProject(project.id); navigate('/') } catch (e2) { setErr((e2 as Error).message); setBusy(false) }
+  }
+
+  return (
+    <form className="form" onSubmit={save}>
+      <div className="fgrid">
+        <div className="field"><label htmlFor="ep-name">Client name</label><input id="ep-name" required value={f.name} onChange={set('name')} /></div>
+        <div className="field"><label htmlFor="ep-plat">Platform</label>
+          <select id="ep-plat" value={f.platform} onChange={set('platform')}>
+            {[...new Set(['Shopify', 'Shopify Plus', 'Other', f.platform])].map((o) => <option key={o}>{o}</option>)}
+          </select></div>
+        <div className="field" style={{ gridColumn: '1 / -1' }}><label htmlFor="ep-url">Store link</label><input id="ep-url" type="url" placeholder="https://" value={f.store_url} onChange={set('store_url')} /></div>
+        <div className="field"><label htmlFor="ep-on">Onboarding date</label><input id="ep-on" type="date" required value={f.onboarded_on} onChange={set('onboarded_on')} /></div>
+        <div className="field"><label htmlFor="ep-fc">First change live <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label><input id="ep-fc" type="date" value={f.first_change_on} onChange={set('first_change_on')} /></div>
+      </div>
+      {err && <div className="notice err" role="alert">{err}</div>}
+      <div className="actions"><button type="submit" className="btn lg" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
+        <button type="button" className="btn subtle lg" onClick={onDone}>Cancel</button></div>
+
+      <div style={{ borderTop: '1px solid var(--line)', paddingTop: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="label" style={{ color: 'var(--err)' }}>Delete project</div>
+        <div className="small">Removes the project and all its history and numbers for everyone. Type <b>{project.name}</b> to confirm.</div>
+        <div className="actions">
+          <label htmlFor="ep-del" className="sr">Type the project name to confirm</label>
+          <input id="ep-del" value={confirmDelete} onChange={(e) => setConfirmDelete(e.target.value)} style={{ maxWidth: 280 }} />
+          <button type="button" className="btn danger" disabled={busy || confirmDelete.trim() !== project.name} onClick={remove}>Delete project</button>
+        </div>
+      </div>
+    </form>
+  )
+}
+
+type Row = { label: string; phase: 'before' | 'after'; value: string }
+
+function EditEntryForm({ entry, values, onDone }: { entry: Entry; values: MetricValue[]; onDone: () => void }) {
+  const [date, setDate] = useState(entry.entry_date)
+  const [title, setTitle] = useState(entry.title)
+  const [note, setNote] = useState(entry.note ?? '')
+  const [rows, setRows] = useState<Row[]>(values.map((v) => ({ label: STORED_LABEL[v.metric_key] ?? v.metric_label, phase: v.phase, value: String(v.value) })))
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const upd = (i: number, patch: Partial<Row>) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
+  const known = ['Conversion rate', 'Average order value', 'Revenue per visitor', 'Mobile speed', 'Desktop speed', 'Load time (LCP)']
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault(); setErr(null)
+    if (!title.trim()) return setErr('Title is required.')
+    const out = []
+    for (const r of rows) {
+      if (!r.label.trim()) return setErr('Each number needs a metric name.')
+      const n = Number(r.value)
+      if (r.value.trim() === '' || !isFinite(n)) return setErr(`${r.label}: “${r.value}” is not a number.`)
+      const m = resolveMetric(r.label)
+      out.push({ metric_key: m.key, metric_label: m.label, phase: r.phase, value: n })
+    }
+    setBusy(true)
+    try { await updateEntry(entry.id, { date, title: title.trim(), note, values: out }); onDone() }
+    catch (e2) { setErr((e2 as Error).message); setBusy(false) }
+  }
+
+  return (
+    <form className="form" onSubmit={save}>
+      <div className="fgrid">
+        <div className="field"><label htmlFor="ee-date">Date</label><input id="ee-date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} /></div>
+        <div className="field"><label htmlFor="ee-title">Title</label><input id="ee-title" required value={title} onChange={(e) => setTitle(e.target.value)} /></div>
+      </div>
+      <div className="field"><label htmlFor="ee-note">Note</label><textarea id="ee-note" rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="label">Numbers</div>
+        <datalist id="metric-names">{known.map((k) => <option key={k} value={k} />)}</datalist>
+        {rows.length === 0 && <div className="small">No numbers on this entry.</div>}
+        {rows.map((r, i) => (
+          <div className="vrow" key={i}>
+            <input aria-label="Metric" list="metric-names" value={r.label} onChange={(e) => upd(i, { label: e.target.value })} />
+            <select aria-label="Before or after" value={r.phase} onChange={(e) => upd(i, { phase: e.target.value as Row['phase'] })}><option value="before">Before</option><option value="after">After</option></select>
+            <input aria-label={`${r.label} value`} type="number" step="any" inputMode="decimal" value={r.value} onChange={(e) => upd(i, { value: e.target.value })} placeholder={metricDef(resolveMetric(r.label || '?').key).ph} />
+            <button type="button" className="icon-btn" aria-label={`Remove ${r.label}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}>{Icon.x()}</button>
+          </div>
+        ))}
+        <div><button type="button" className="linkbtn" onClick={() => setRows([...rows, { label: '', phase: 'after', value: '' }])}>+ Add a number</button></div>
+      </div>
+      {err && <div className="notice err" role="alert">{err}</div>}
+      <div className="actions"><button type="submit" className="btn lg" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
+        <button type="button" className="btn subtle lg" onClick={onDone}>Cancel</button></div>
+    </form>
   )
 }

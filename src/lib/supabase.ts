@@ -1,17 +1,16 @@
 import { createClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
-const key = import.meta.env.VITE_SUPABASE_KEY as string | undefined
+// Public values (safe in browser code). Env vars override them, e.g. for a staging project.
+const DEFAULT_URL = 'https://xjlsybztnaraxbizzcui.supabase.co'
+const DEFAULT_KEY = 'sb_publishable_b-yWrOktW1WqPMrVrA0pzA_QaPjcwjc'
+
+const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || DEFAULT_URL
+const key = (import.meta.env.VITE_SUPABASE_KEY as string | undefined) || DEFAULT_KEY
 
 /** 'local' uses the bundled Node server (server/index.mjs); anything else uses Supabase. */
 export const BACKEND: 'local' | 'supabase' = import.meta.env.VITE_BACKEND === 'local' ? 'local' : 'supabase'
 
-if (BACKEND === 'supabase' && (!url || !key)) {
-  throw new Error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_KEY. Copy .env.example to .env, or set VITE_BACKEND=local.')
-}
-
-export const supabase = BACKEND === 'supabase' ? createClient(url!, key!) : (null as unknown as ReturnType<typeof createClient>)
-
+export const supabase = createClient(url, key)
 export type Project = {
   id: string
   name: string

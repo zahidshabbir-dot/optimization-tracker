@@ -155,3 +155,27 @@ export async function downloadTemplate(projects: Project[]) {
   await writeXlsxFile(data as any, { columns: [{ width: 26 }, { width: 14 }, { width: 22 }, { width: 14 }, { width: 10 }] }).toFile('optimization-tracker-template.xlsx')
 }
 
+
+/** Export values in the same layout the importer reads, so the file can be edited and re-imported. */
+export async function exportXlsx(projects: Project[], values: { project_id: string; recorded_on: string; metric_label: string; phase: string; value: number }[], fileName: string) {
+  const names = new Map(projects.map((p) => [p.id, p.name]))
+  const rows = values
+    .filter((v) => names.has(v.project_id))
+    .sort((a, b) => names.get(a.project_id)!.localeCompare(names.get(b.project_id)!) || a.recorded_on.localeCompare(b.recorded_on) || a.metric_label.localeCompare(b.metric_label))
+  const header = ['Project', 'Date', 'Metric', 'Before/After', 'Value'].map((v) => ({ value: v, fontWeight: 'bold' as const }))
+  const data = [
+    header,
+    ...rows.map((v) => {
+      const [y, m, d] = v.recorded_on.split('-').map(Number)
+      return [
+        { value: names.get(v.project_id)! },
+        { value: new Date(y, m - 1, d), type: Date, format: 'yyyy-mm-dd' },
+        { value: v.metric_label },
+        { value: v.phase === 'before' ? 'Before' : 'After' },
+        { value: Number(v.value), type: Number },
+      ]
+    }),
+  ]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await writeXlsxFile(data as any, { columns: [{ width: 26 }, { width: 14 }, { width: 24 }, { width: 14 }, { width: 10 }] }).toFile(fileName)
+}

@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useTracker } from '../lib/data'
+import { useAuth } from '../lib/auth'
 
 export const Icon = {
   grid: (c = 'currentColor') => (
@@ -38,6 +39,7 @@ function lastProject() {
 
 export default function Layout() {
   const { live, projects } = useTracker()
+  const { email, signOut } = useAuth()
   const loc = useLocation()
   const last = lastProject()
   const detailId = (last && projects.some((p) => p.id === last) ? last : projects[0]?.id) ?? ''
@@ -57,9 +59,15 @@ export default function Layout() {
           <NavLink to={detailId ? `/projects/${detailId}` : '/'} className={'navlink' + (onDetail ? ' active' : '')}>{Icon.folder()}Project detail</NavLink>
           <NavLink to="/add" className={({ isActive }) => 'navlink' + (isActive ? ' active' : '')}>{Icon.upload()}Add data</NavLink>
         </nav>
-        <div className="side-foot" role="status" aria-live="polite">
-          <span className={'live-dot ' + live} />
-          {live === 'live' ? 'Live · updates instantly' : live === 'offline' ? 'Offline · reconnecting' : 'Connecting…'}
+        <div className="side-foot" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+          <div role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className={'live-dot ' + live} />
+            {live === 'live' ? 'Live · updates instantly' : live === 'offline' ? 'Offline · reconnecting' : 'Connecting…'}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', maxWidth: '100%' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 190 }} title={email ?? ''}>{email}</span>
+            {email && email !== 'Local mode' && <button type="button" className="linkbtn" style={{ fontSize: 12 }} onClick={signOut}>Sign out</button>}
+          </div>
         </div>
       </aside>
       <main className="main">

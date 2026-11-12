@@ -100,6 +100,35 @@ createServer(async (req, res) => {
       const id = tx(() => createProject(b))
       broadcast(); return send(res, 201, { id })
     }
+    const m = req.url.match(/^\/api\/(projects|entries)\/([0-9a-f-]{36})$/)
+    if (m && req.method === 'DELETE') {
+      db.prepare(`DELETE FROM ${m[1]} WHERE id=?`).run(m[2])
+      broadcast(); return send(res, 200, { id: m[2] })
+    }
+    if (m && req.method === 'PUT' && m[1] === 'projects') {
+      const b = await readBody(req)
+      if (!b.name?.trim() || !isDate(b.onboarded_on)) return send(res, 400, { error: 'Name and onboarding date are required' })
+      if (db.prepare('SELECT 1 FROM projects WHERE lower(name)=lower(?) AND id<>?').get(b.name.trim(), m[2])) return send(res, 400, { error: 'A project with that name already exists.' })
+      db.prepare('UPDATE projects SET name=?, platform=?, store_url=?, onboarded_on=?, first_change_on=? WHERE id=?')
+        .run(b.name.trim(), b.platform || 'Shopify', b.store_url || null, b.onboarded_on, isDate(b.first_change_on) ? b.first_change_on : null, m[2])
+      broadcast(); return send(res, 200, { id: m[2] })
+    }
+    if (m && req.method === 'PUT' && m[1] === 'entries') {
+      const b = await readBody(req)
+      if (!isDate(b.date)) return send(res, 400, { error: 'Invalid date' })
+      const e = db.prepare('SELECT project_id FROM entries WHERE id=?').get(m[2])
+      if (!e) return send(res, 404, { error: 'Entry not found' })
+      tx(() => {
+        db.prepare('UPDATE entries SET entry_date=?, title=?, note=? WHERE id=?').run(b.date, String(b.title || 'Data added'), (b.note || '').trim() || null, m[2])
+        db.prepare('DELETE FROM metric_values WHERE entry_id=?').run(m[2])
+        const ins = db.prepare('INSERT INTO metric_values VALUES (?,?,?,?,?,?,?,?,?)')
+        for (const v of b.values || []) {
+          if (!['before', 'after'].includes(v.phase) || !Number.isFinite(Number(v.value))) throw new Error('Invalid metric value')
+          ins.run(randomUUID(), e.project_id, m[2], String(v.metric_key), String(v.metric_label || v.metric_key), v.phase, Number(v.value), b.date, now())
+        }
+      })
+      broadcast(); return send(res, 200, { id: m[2] })
+    }
     send(res, 404, { error: 'Not found' })
   } catch (e) {
     send(res, 400, { error: e.message })
