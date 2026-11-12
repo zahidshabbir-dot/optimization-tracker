@@ -43,3 +43,9 @@ Columns: `Project, Date, Metric, Before/After, Value`. The header names are flex
 ## Security note
 
 The design has no login, so row-level security currently lets anyone holding the public key **read and add** data. Nobody can update or delete metric values through that key. Before sharing the app publicly, add Supabase Auth and limit the policies to `authenticated` users.
+
+## Deploy
+
+**Vercel:** import the GitHub repo and keep the Vite preset. Add the environment variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_KEY` and `VITE_BACKEND=supabase` (values are in `.env.example`), then deploy. `vercel.json` makes page reloads on `/projects/...` and `/add` work.
+
+**Netlify:** import the repo; `netlify.toml` sets the build command and the page-reload rule. Add the same three environment variables.
